@@ -8,14 +8,14 @@ import matplotlib.pyplot as plt
 
 if __name__ == '__main__':
 
-    train_ds = ImageFolderDataset("G:\data\GAN\celeba\img_align_celeba", img_dim=64)
+    train_ds = ImageFolderDataset("/workspace/data/celeba/img_align_celeba", img_dim=64)
 
     device = "cpu"
     model = NVAE(z_dim=512, img_dim=(64, 64))
     model.apply(add_sn)
     model.to(device)
 
-    model.load_state_dict(torch.load("checkpoints/ae_ckpt_3_0.795224.pth", map_location=device), strict=False)
+    model.load_state_dict(torch.load("/workspace/nvae/checkpoints/ae_ckpt_29_1133.711199.pth", map_location=device), strict=False)
 
     model.eval()
 
@@ -26,12 +26,12 @@ if __name__ == '__main__':
     plt.show()
 
     with torch.no_grad():
-        gen_imgs, _ = model(img)
+        gen_imgs = model(img)[0]
         gen_imgs = gen_imgs.permute(0, 2, 3, 1)
         for gen_img in gen_imgs:
             gen_img = gen_img.cpu().numpy() * 255
             gen_img = gen_img.astype(np.uint8)
 
             plt.imshow(gen_img)
-            # plt.savefig(f"output/ae_ckpt_%d_%.6f.png" % (epoch, total_loss))
+            plt.savefig("output/test.png")
             plt.show()

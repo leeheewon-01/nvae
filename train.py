@@ -1,32 +1,20 @@
 import argparse
 import logging
 import os
-import time
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
+from tqdm.notebook import tqdm
+
 from nvae.dataset import ImageFolderDataset
 from nvae.utils import add_sn
 from nvae.vae_celeba import NVAE
 
-
 class WarmupKLLoss:
-
-    def __init__(self, init_weights, steps,
-                 M_N=0.005,
-                 eta_M_N=1e-5,
-                 M_N_decay_step=3000):
-        """
-        预热KL损失，先对各级别的KL损失进行预热，预热完成后，对M_N的值进行衰减,所有衰减策略采用线性衰减
-        :param init_weights: 各级别 KL 损失的初始权重
-        :param steps: 各级别KL损失从初始权重增加到1所需的步数
-        :param M_N: 初始M_N值
-        :param eta_M_N: 最小M_N值
-        :param M_N_decay_step: 从初始M_N值到最小M_N值所需的衰减步数
-        """
+    def __init__(self, init_weights, steps, M_N=0.005, eta_M_N=1e-5, M_N_decay_step=3000):
         self.init_weights = init_weights
         self.M_N = M_N
         self.eta_M_N = eta_M_N
@@ -40,10 +28,8 @@ class WarmupKLLoss:
 
     def _get_stage(self, step):
         while True:
-
             if self.stage > len(self.steps) - 1:
                 break
-
             if step <= self.steps[self.stage]:
                 return self.stage
             else:
@@ -66,9 +52,7 @@ class WarmupKLLoss:
             else:
                 w = self.init_weights[i]
 
-            # 如果所有级别的KL损失的预热都已完成
             if self._ready_for_M_N == False and i == len(losses) - 1 and w == 1.:
-                # 准备M_N的衰减
                 self._ready_for_M_N = True
                 self._ready_start_step = step
             l = losses[i] * w
@@ -128,13 +112,15 @@ if __name__ == '__main__':
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=15, eta_min=1e-4)
 
     step = 0
+    total_loss = 0
+    # Epoch progress bar
+
     for epoch in range(epochs):
         model.train()
 
-        n_true = 0
-        total_size = 0
-        total_loss = 0
-        for i, image in enumerate(train_dataloader):
+        batch_pbar = tqdm(train_dataloader, desc=f'Epoch {epoch}/{epochs}')
+        for i, image in enumerate(batch_pbar):
+
             optimizer.zero_grad()
 
             image = image.to(device)
@@ -142,40 +128,41 @@ if __name__ == '__main__':
             kl_loss = warmup_kl.get_loss(step, kl_losses)
             loss = recon_loss + kl_loss
 
-            log_str = "\r---- [Epoch %d/%d, Step %d/%d] loss: %.6f----" % (
-                epoch, epochs, i, len(train_dataloader), loss.item())
-            logging.info(log_str)
-
             loss.backward()
             optimizer.step()
 
+            batch_pbar.set_description(f'Epoch {epoch}/{epochs} - Step {step} - Loss {loss.item():.6f}')
+            batch_pbar.update(1)
+
             step += 1
+            total_loss += loss.item()
 
-            if step != 0 and step % 100 == 0:
-                with torch.no_grad():
-                    z = torch.randn((1, 512, 2, 2)).to(device)
-                    gen_img, _ = model.decoder(z)
-                    gen_img = gen_img.permute(0, 2, 3, 1)
-                    gen_img = gen_img[0].cpu().numpy() * 255
-                    gen_img = gen_img.astype(np.uint8)
+            # if step != 0 and step % 100 == 0:
+            #     with torch.no_grad():
+            #         z = torch.randn((1, 512, 2, 2)).to(device)
+            #         gen_img, _ = model.decoder(z)
+            #         gen_img = gen_img.permute(0, 2, 3, 1)
+            #         gen_img = gen_img[0].cpu().numpy() * 255
+            #         gen_img = gen_img.astype(np.uint8)
 
-                    plt.imshow(gen_img)
-                    # plt.savefig(f"output/ae_ckpt_%d_%.6f.png" % (epoch, total_loss))
-                    plt.show()
+            #         plt.imshow(gen_img)
+            #         # plt.savefig(f"output/ae_ckpt_%d_%d.png" % (epoch, step))
+            #         plt.show()
 
         scheduler.step()
 
-        torch.save(model.state_dict(), f"checkpoints/ae_ckpt_%d_%.6f.pth" % (epoch, loss.item()))
+        torch.save(model.state_dict(), f"checkpoints/ae_ckpt_%d_%.6f.pth" % (epoch, total_loss))
 
-        model.eval()
+        total_loss = 0
+        # model.eval()
 
-        with torch.no_grad():
-            z = torch.randn((1, 512, 2, 2)).to(device)
-            gen_img, _ = model.decoder(z)
-            gen_img = gen_img.permute(0, 2, 3, 1)
-            gen_img = gen_img[0].cpu().numpy() * 255
-            gen_img = gen_img.astype(np.uint8)
+        # with torch.no_grad():
+        #     z = torch.randn((1, 512, 2, 2)).to(device)
+        #     gen_img, _ = model.decoder(z)
+        #     gen_img = gen_img.permute(0, 2, 3, 1)
+        #     gen_img = gen_img[0].cpu().numpy() * 255
+        #     gen_img = gen_img.astype(np.uint8)
 
-            plt.imshow(gen_img)
-            # plt.savefig(f"output/ae_ckpt_%d_%.6f.png" % (epoch, total_loss))
-            plt.show()
+        #     plt.imshow(gen_img)
+        #     plt.savefig(f"output/ae_ckpt_%d_%.6f.png" % (epoch, loss.item()))
+        #     plt.show()
